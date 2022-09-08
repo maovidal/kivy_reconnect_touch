@@ -1,0 +1,14 @@
+#:kivy 2.1.0
+
+GridLayout:
+    cols: 1
+    padding: 200
+    spacing: 50
+
+    Button:
+        text: "Press to force reloading of touch input device"
+        on_release:
+            app.ask_for_inputs_rebuild = True
+
+    Label:
+        text: "Check for the results in the Log"
