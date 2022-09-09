@@ -24,7 +24,9 @@ using the environment variable KIVY_HOME:
 export KIVY_HOME=/path/to/your/config/file
 ```
 
-3. Be sure to set the same name of the device on `TOUCH_DEVICE_NAME`.
+3. Be sure to set the same name of the device on `TOUCH_DEVICE_NAME`. The
+variable `FOLDER_TO_MONITOR` is set to monitor the changes of the folder
+'/sys/class/input' in Linux.
 
 4. There is an additional handler configured here for the logger. If not used,
 please comment it to disable it.
@@ -36,6 +38,8 @@ adds it back.
 
 
 import logging.handlers
+import os
+from glob import glob
 import trio
 
 from kivy.config import (
@@ -63,6 +67,8 @@ from kivy.properties import (
 
 # Touch device name
 TOUCH_DEVICE_NAME = 'egalaxP829_9AHDT'
+# The folder that changes when an input device is changed in Linux
+FOLDER_TO_MONITOR = '/sys/class/input'
 
 
 # The next is not required. It just provide the log output to an external
@@ -89,9 +95,40 @@ class TouchReconnect(App):
         Logger.info("TouchReconnect app initializing")
         # Trio nursery
         self.nursery = None
+        # A cache of the folder to monitor is kept. Its initial content is
+        # loaded here, at start
+        self._cache_input: list = self._monitored_folder_content()
 
     # Variable to decide when an input rebuild is necessary
     ask_for_inputs_rebuild = BooleanProperty(False)
+
+    def _monitored_folder_content(self) -> list:
+        """
+        Returns the content of the monitored folder.
+        """
+        event_glob = os.path.join(FOLDER_TO_MONITOR, "event*")
+        got = [x for x in glob(event_glob)]
+        # Logger.info(f"The current content is: {got}")
+        return got
+
+    def _changed_monitored_folder(self) -> bool:
+        """
+        Returns:
+        - True, if the monitored folder have had changes on its content.
+        - False, otherwise
+        """
+
+        # Updates the current content of the monitored folder
+        current_cache_input = self._monitored_folder_content()
+
+        # If the current content is different from the previous, then we
+        # report that.
+        if self._cache_input:
+            if self._cache_input == current_cache_input:
+                return False
+        # Reaching this point means the cache has changed
+        self._cache_input = current_cache_input
+        return True
 
     async def reconnect_cycle(self):
         """
@@ -103,7 +140,12 @@ class TouchReconnect(App):
             the_event_loop = EventLoop
 
             while True:
-                if self.ask_for_inputs_rebuild is True:
+                has_monitored_folder_changed = self._changed_monitored_folder()
+                if has_monitored_folder_changed is True:
+                    Logger.info('Heads up, the monitored folder has changed')
+
+                # if self.ask_for_inputs_rebuild is True:
+                if has_monitored_folder_changed is True or self.ask_for_inputs_rebuild is True:
                     # We inform about the current input providers available
                     got_device_names = ''
                     for provider in the_event_loop.input_providers:
