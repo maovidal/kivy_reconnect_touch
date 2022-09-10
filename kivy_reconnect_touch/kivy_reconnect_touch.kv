@@ -2,13 +2,8 @@
 
 GridLayout:
     cols: 1
-    padding: 200
-    spacing: 50
-
-    Button:
-        text: "Press to force reloading of touch input device"
-        on_release:
-            app.ask_for_inputs_rebuild = True
+    padding: 200, 50
 
     Label:
-        text: "Check for the results in the Log"
+        text: app.events_recorded
+        size_hint: 1,1

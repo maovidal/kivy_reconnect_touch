@@ -1,15 +1,24 @@
 """ ----------------------------------------------------------------------------
 
-**THIS IS A WORK IN PROGRESS**
+This is a rudimentary effort to implement a touch screen reconnect in Kivy.
+It is meant for Linux and uses Trio.
 
-This is an effort to implement a touch screen reconnect in Kivy.
-It is meant for Linux and use Trio.
+Among its many limitations, it works only for one specific device set on
+Kivy's configuration file.
+
+It works by monitoring the changes on the folder where Linux exposes the
+devices that work as inputs. Then if the content is reduced, this script
+assumes there is a disconnection of the touch device (which may incorrectly
+triggered by other events). A connection, also is assumed when the content of
+the monitored folder is increase, which also has the same problem of its
+counterpart.
+
 
 Setup:
 
 1. Kivy `config.ini` should have the device configured with something like this
 (The tested touch device in my case is a eGalax touch screen that requires
-inversion of its surface):
+inversion of its axis):
 
 ```
 [input]
@@ -17,7 +26,7 @@ mouse = mouse
 egalaxP829_9AHDT = probesysfs,match=eGalax Inc. Touch Touchscreen,select_all=1,provider=hidinput,param=invert_x=1,param=invert_y=0
 ```
 
-2. Make sure the expected Kivy's config.ini is used. That can be achieve
+2. Make sure the expected Kivy's config.ini is used. That can be achieved
 using the environment variable KIVY_HOME:
 
 ```
@@ -28,23 +37,17 @@ export KIVY_HOME=/path/to/your/config/file
 variable `FOLDER_TO_MONITOR` is set to monitor the changes of the folder
 '/sys/class/input' in Linux.
 
-4. There is an additional handler configured here for the logger. If not used,
-please comment it to disable it.
+4. Once running this script, disconnect or connect the cable of the touch
+device. Kivy's interface and log should provide information about it is
+dealing with the available input devices.
 
-5. Once running this script, pulse the button. Kivy's log should provide
-information about how it removes the input provider and later, how it
-adds it back.
 ---------------------------------------------------------------------------- """
 
-
-import logging.handlers
 import os
 from glob import glob
+from enum import Enum
 import trio
 
-from kivy.config import (
-    Config,
-)
 from kivy.logger import (
     Logger,
 )
@@ -57,30 +60,28 @@ from kivy.app import (
 from kivy.base import (
     EventLoop,
 )
-from kivy.input import(
-    MotionEventFactory,
+from kivy.input.providers.probesysfs import(
+    ProbeSysfsHardwareProbe,
 )
 from kivy.properties import (
-    BooleanProperty,
+    StringProperty,
 )
 
 
 # Touch device name
 TOUCH_DEVICE_NAME = 'egalaxP829_9AHDT'
-# The folder that changes when an input device is changed in Linux
+
+# The folder that changes when an input device connected/disconnected in Linux
 FOLDER_TO_MONITOR = '/sys/class/input'
 
 
-# The next is not required. It just provide the log output to an external
-# Syslog server, which in my case helps to debug the embedded device that
-# runs this code.
-
-# Comment if not required.
-handler = logging.handlers.SysLogHandler(
-    address=('192.168.2.1', 5514),
-    facility=19,
-)
-Logger.addHandler(handler)
+class MonitoredEvent(Enum):
+    """
+    Identifies the event monitored.
+    """
+    NO_CHANGE = 0
+    CONNECTED = 1
+    DISCONNECTED = 2
 
 
 class TouchReconnect(App):
@@ -100,7 +101,7 @@ class TouchReconnect(App):
         self._cache_input: list = self._monitored_folder_content()
 
     # Variable to decide when an input rebuild is necessary
-    ask_for_inputs_rebuild = BooleanProperty(False)
+    events_recorded = StringProperty('The events will appear here once the touch cable is connected or disconnected')
 
     def _monitored_folder_content(self) -> list:
         """
@@ -108,14 +109,12 @@ class TouchReconnect(App):
         """
         event_glob = os.path.join(FOLDER_TO_MONITOR, "event*")
         got = [x for x in glob(event_glob)]
-        # Logger.info(f"The current content is: {got}")
         return got
 
-    def _changed_monitored_folder(self) -> bool:
+    def _get_change_in_monitored_folder(self) -> MonitoredEvent:
         """
-        Returns:
-        - True, if the monitored folder have had changes on its content.
-        - False, otherwise
+        Returns a class `MonitoredEvent` indicating the event on the monitored
+        folder.
         """
 
         # Updates the current content of the monitored folder
@@ -123,12 +122,15 @@ class TouchReconnect(App):
 
         # If the current content is different from the previous, then we
         # report that.
-        if self._cache_input:
-            if self._cache_input == current_cache_input:
-                return False
-        # Reaching this point means the cache has changed
-        self._cache_input = current_cache_input
-        return True
+        if self._cache_input == current_cache_input:
+            return MonitoredEvent.NO_CHANGE
+        else:
+            if len(self._cache_input) < len(current_cache_input):
+                self._cache_input = current_cache_input
+                return MonitoredEvent.CONNECTED
+            else:
+                self._cache_input = current_cache_input
+                return MonitoredEvent.DISCONNECTED
 
     async def reconnect_cycle(self):
         """
@@ -140,71 +142,49 @@ class TouchReconnect(App):
             the_event_loop = EventLoop
 
             while True:
-                has_monitored_folder_changed = self._changed_monitored_folder()
-                if has_monitored_folder_changed is True:
-                    Logger.info('Heads up, the monitored folder has changed')
+                # Checks for a change on the connection
+                change_in_monitored_folder = self._get_change_in_monitored_folder()
+                if change_in_monitored_folder is MonitoredEvent.CONNECTED:
+                    Logger.info('Heads up, a connection has happened')
+                    self.events_recorded = self.events_recorded + '\nHeads up, a connection has occurred'
 
-                # if self.ask_for_inputs_rebuild is True:
-                if has_monitored_folder_changed is True or self.ask_for_inputs_rebuild is True:
+                elif change_in_monitored_folder is MonitoredEvent.DISCONNECTED:
+                    Logger.info('Heads up, a disconnection has happened')
+                    self.events_recorded = self.events_recorded + '\nHeads up, a disconnection has occurred'
+
+                if change_in_monitored_folder is not MonitoredEvent.NO_CHANGE:
                     # We inform about the current input providers available
                     got_device_names = ''
                     for provider in the_event_loop.input_providers:
                         got_device_names = got_device_names + '\n' + str(provider.device)
-                    Logger.info(f'Prior removing providers we have this available: {got_device_names}')
+                    Logger.info(f'These are the current providers available: {got_device_names}')
 
-                    # Now we perform the removal...
-                    # (Based on: https://github.com/kivy/kivy/blob/c28c47b39ae57c97c70cc0398d74774d73a6894b/kivy/base.py#L193)
-                    for provider in reversed(EventLoop.input_providers[:]):
-                        # ... only if the device name matches the expected
-                        if str(provider.device).lower() == str(TOUCH_DEVICE_NAME).lower():
-                            Logger.info(f'{provider.device} will be removed')
-                            provider.stop()
-                            EventLoop.remove_input_provider(provider)
-                        else:
-                            Logger.info(f'{provider.device} will be kept')
+                    # When a device has been disconnected
+                    if change_in_monitored_folder is MonitoredEvent.DISCONNECTED:
+                        # We remove it from the available input providers...
+                        # (Based on: https://github.com/kivy/kivy/blob/c28c47b39ae57c97c70cc0398d74774d73a6894b/kivy/base.py#L193)
+                        for provider in the_event_loop.input_providers:
+                            # ... only if the device name matches the expected
+                            if str(provider.device).lower() == str(TOUCH_DEVICE_NAME).lower():
+                                provider.stop()
+                                the_event_loop.remove_input_provider(provider)
+                                Logger.info(f'{provider.device} has been stopped and removed')
 
-                    # Checks for the removal
-                    await trio.sleep(1.0)
+                    # When a device has been connected
+                    if change_in_monitored_folder is MonitoredEvent.CONNECTED:
+                        # We ask Probesysfs to work its magic to add the provider
+                        ProbeSysfsHardwareProbe(device=str(TOUCH_DEVICE_NAME).lower(), args='match=eGalax Inc. Touch Touchscreen,select_all=1,provider=hidinput,param=invert_x=1,param=invert_y=0')
+                        # And now we start it
+                        for provider in the_event_loop.input_providers:
+                            if str(provider.device).lower() == str(TOUCH_DEVICE_NAME).lower():
+                                provider.start()
+                                Logger.info(f'{str(provider.device)} has been asked to start')
+
+                    # Checks for the resulting providers
                     got_device_names = ''
                     for provider in the_event_loop.input_providers:
                         got_device_names = got_device_names + '\n' + str(provider.device)
-                    Logger.info(f'After removing we have this available: {got_device_names}')
-
-                    # Asks to append the input device again
-                    # We will look for the device details from the current
-                    # configuration.
-                    # (Based on: https://github.com/kivy/kivy/blob/c28c47b39ae57c97c70cc0398d74774d73a6894b/kivy/base.py#L498)
-                    for key, value in Config.items('input'):
-                        if str(key).lower() == str(TOUCH_DEVICE_NAME).lower():
-                            Logger.info('Base: Create provider from %s' % (str(value)))
-
-                            # split value
-                            args = str(value).split(',', 1)
-                            if len(args) == 1:
-                                args.append('')
-                            provider_id, args = args
-                            provider = MotionEventFactory.get(provider_id)
-                            if provider is None:
-                                Logger.warning('Base: Unknown <%s> provider' % str(provider_id))
-                                continue
-
-                            # create provider
-                            p = provider(key, args)
-                            if p:
-                                EventLoop.add_input_provider(p, True)
-
-                    # Is is necessary?
-                    the_event_loop.start()
-
-                    # Checks that the inclusion was performed
-                    await trio.sleep(1.0)
-                    got_device_names = ''
-                    for provider in the_event_loop.input_providers:
-                        got_device_names = got_device_names + '\n' + str(provider.device)
-                    Logger.info(f'After inclusion we have this available: {got_device_names}')
-
-                    # Sets the flag to its default value
-                    self.ask_for_inputs_rebuild = False
+                    Logger.info(f'After the connection/disconnection, these are the providers available: {got_device_names}')
 
                 # Performs the check every second
                 await trio.sleep(1.0)
