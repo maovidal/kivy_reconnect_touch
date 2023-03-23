@@ -3,15 +3,21 @@
 This is a rudimentary effort to implement a touch screen reconnect in Kivy.
 It is meant for Linux and uses Trio.
 
-Among its many limitations, it works only for one specific device set on
-Kivy's configuration file.
-
 It works by monitoring the changes on the folder where Linux exposes the
-devices that work as inputs. Then if the content is reduced, this script
-assumes there is a disconnection of the touch device (which may incorrectly
-triggered by other events). A connection, also is assumed when the content of
-the monitored folder is increase, which also has the same problem of its
-counterpart.
+devices that work as inputs:
+
+- If the content is reduced, this script assumes there is a disconnection
+  of the touch device.
+- If the content is increased, this script assumes there is a connection
+  of the touch device.
+
+However it has the following limitations:
+
+- It works only for one specific device set on Kivy's configuration file.
+- Monitoring the folder content may triggered the updates for causes that
+  may not be related to the touch.
+- If the consecutive content of the monitored folder changes faster than the
+  periodic sampling, the update won't be triggered.
 
 
 Setup:
