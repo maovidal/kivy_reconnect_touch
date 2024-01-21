@@ -123,7 +123,7 @@ class TouchReconnect(App):
         folder.
         """
 
-        # Updates the current content of the monitored folder
+        # Update the current content of the monitored folder
         current_cache_input = self._monitored_folder_content()
 
         # If the current content is different from the previous, then we
@@ -148,7 +148,7 @@ class TouchReconnect(App):
             the_event_loop = EventLoop
 
             while True:
-                # Checks for a change on the connection
+                # Check for a change on the connection
                 change_in_monitored_folder = self._get_change_in_monitored_folder()
                 if change_in_monitored_folder is MonitoredEvent.CONNECTED:
                     Logger.info('Heads up, a connection has happened')
@@ -186,13 +186,13 @@ class TouchReconnect(App):
                                 provider.start()
                                 Logger.info(f'{str(provider.device)} has been asked to start')
 
-                    # Checks for the resulting providers
+                    # Check for the resulting providers
                     got_device_names = ''
                     for provider in the_event_loop.input_providers:
                         got_device_names = got_device_names + '\n' + str(provider.device)
                     Logger.info(f'After the connection/disconnection, these are the providers available: {got_device_names}')
 
-                # Performs the check every second
+                # Perform the check every second
                 await trio.sleep(1.0)
 
         except trio.Cancelled as exception:
